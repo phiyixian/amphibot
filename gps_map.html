@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Boat Tracker Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Mapbox -->
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      position: relative;
+    }
+    /* Sidebar styles */
+#sidebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 250px;      /* fixed width */
+  height: 100%;      /* full height */
+  background: #f8f8f8;
+  border-right: 1px solid #ccc;
+  padding: 10px 15px;
+  box-sizing: border-box;
+  overflow-y: auto;  /* scroll if content is long */
+  font-family: Arial, sans-serif;
+  z-index: 1100;     /* above map controls */
+}
+
+#sidebar h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 1.2em;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 5px;
+}
+
+#pinList {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+/* Adjust map to not go under sidebar */
+#map {
+  position: absolute;
+  top: 0;
+  left: 250px;  /* leave space for sidebar */
+  width: calc(100% - 250px);
+  height: 100%;
+}
+    .car-marker {
+      width: 40px;
+      height: 40px;
+      background-image: url('https://upload.wikimedia.org/wikipedia/commons/d/db/Blue_Arrow_Up_Darker.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      transform-origin: center center;
+    }
+
+    .survivor-marker {
+      width: 20px;
+      height: 20px;
+      background-color: red;
+      border-radius: 50%;
+      border: 2px solid white;
+    }
+
+    #centerBtn {
+      position: absolute;
+      bottom: 20px;     /* position from bottom */
+      right: 20px;      /* position from right */
+      z-index: 1000;
+      padding: 10px 16px;
+      background: white;
+      color: black;
+      font-weight: bold;
+      border: 2px solid #000;
+      border-radius: 5px;
+      cursor: pointer;
+      box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.4);
+      display: none; /* Hidden at first */
+    }
+  </style>
+</head>
+<body>
+  <!-- Sidebar for survivor pins list -->
+  <div id="sidebar">
+    <h3>Survivor Pins</h3>
+    <ul id="pinList"></ul>
+  </div>
+<!-- Map -->
+<div id="map"></div>
+
+<!-- Center Robot Button -->
+<button id="centerBtn">Center Robot</button>
+
+<script>
+  // Mapbox access token
+  mapboxgl.accessToken = 'pk.eyJ1Ijoic2t5ZTEyOSIsImEiOiJjbWJrdHZ3OXYwdTZxMmxwdjFqNjBqc2psIn0.ScnyAu71F8xdxE7Z9N49iA';
+
+  // Firebase config
+  const firebaseConfig = {
+    apiKey: "AIzaSyDsOrjAd-h_d2N5gIKr7LD1yu_V9_K63r4",
+    authDomain: "gpstest-3bed5.firebaseapp.com",
+    databaseURL: "https://gpstest-3bed5-default-rtdb.asia-southeast1.firebasedatabase.app/",
+    projectId: "gpstest-3bed5",
+    storageBucket: "gpstest-3bed5.appspot.com",
+    messagingSenderId: "14670212530",
+    appId: "1:14670212530:web:c4a346837779980d0fc8ab"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  const initial = [101.6869, 3.1390];
+
+  const map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/streets-v12',
+    center: initial,
+    zoom: 16,
+    pitch: 60,
+    bearing: 0
+  });
+
+  map.addControl(new mapboxgl.NavigationControl());
+
+  const carEl = document.createElement('div');
+  carEl.className = 'car-marker';
+
+  const boatMarker = new mapboxgl.Marker(carEl)
+    .setLngLat(initial)
+    .addTo(map);
+
+  let lastBoatLngLat = initial;
+
+  function updateCar(lng, lat, heading) {
+    lastBoatLngLat = [lng, lat];
+    boatMarker.setLngLat([lng, lat]);
+    carEl.style.transform = `rotate(${heading}deg)`;
+  }
+
+  // Firebase listener: boat position
+  db.ref("boat").on("value", (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      updateCar(data.lng, data.lat, data.heading);
+    }
+  });
+
+  const pinListEl = document.getElementById('pinList');
+
+// Helper: render the sidebar list of pins
+function renderPinList() {
+  pinListEl.innerHTML = ''; // clear existing list
+
+  for (const key in pinsMarkers) {
+    const marker = pinsMarkers[key];
+    const lngLat = marker.getLngLat();
+
+    // Create list item
+    const li = document.createElement('li');
+    li.textContent = `Pin ${key} (${lngLat.lat.toFixed(5)}, ${lngLat.lng.toFixed(5)})`;
+    li.style.cursor = 'pointer';
+    li.style.padding = '4px 8px';
+    li.style.borderBottom = '1px solid #ccc';
+
+    // Click centers map on this pin
+    li.addEventListener('click', () => {
+      map.easeTo({
+        center: [lngLat.lng, lngLat.lat],
+        zoom: 18,
+        duration: 1000,
+        pitch: 60
+      });
+    });
+
+    pinListEl.appendChild(li);
+  }
+
+  // If no pins
+  if (Object.keys(pinsMarkers).length === 0) {
+    const emptyLi = document.createElement('li');
+    emptyLi.textContent = 'No survivor pins';
+    emptyLi.style.color = '#888';
+    pinListEl.appendChild(emptyLi);
+  }
+}
+
+
+  // Firebase listener: survivor pins
+  const pinsMarkers = {};
+db.ref("pins").on("child_added", (snapshot) => {
+  const key = snapshot.key;
+  const pin = snapshot.val();
+
+  if (!pinsMarkers[key]) {
+    const el = document.createElement('div');
+    el.className = 'survivor-marker';
+
+    const deleteBtn = document.createElement('div');
+    deleteBtn.innerText = '×';
+    deleteBtn.style.position = 'absolute';
+    deleteBtn.style.top = '-10px';
+    deleteBtn.style.right = '-10px';
+    deleteBtn.style.width = '20px';
+    deleteBtn.style.height = '20px';
+    deleteBtn.style.backgroundColor = 'white';
+    deleteBtn.style.color = 'red';
+    deleteBtn.style.fontWeight = 'bold';
+    deleteBtn.style.textAlign = 'center';
+    deleteBtn.style.borderRadius = '50%';
+    deleteBtn.style.cursor = 'pointer';
+    deleteBtn.style.boxShadow = '0 0 4px rgba(0,0,0,0.5)';
+    deleteBtn.title = 'Delete pin';
+
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const confirmDelete = confirm("Delete this survivor pin?");
+      if (confirmDelete) {
+        db.ref("pins").child(key).remove();
+      }
+    });
+
+    el.appendChild(deleteBtn);
+
+    const pinMarker = new mapboxgl.Marker(el)
+      .setLngLat([pin.lng, pin.lat])
+      .addTo(map);
+
+    pinsMarkers[key] = pinMarker;
+
+    renderPinList();  // Update sidebar list after adding pin
+  }
+});
+
+// Listen for survivor pin updates
+db.ref("pins").on("child_changed", (snapshot) => {
+  const key = snapshot.key;
+  const pin = snapshot.val();
+
+  if (pinsMarkers[key]) {
+    pinsMarkers[key].setLngLat([pin.lng, pin.lat]);
+    renderPinList();  // Update sidebar list in case location changed
+  }
+});
+
+// Listen for survivor pin removals
+db.ref("pins").on("child_removed", (snapshot) => {
+  const key = snapshot.key;
+
+  if (pinsMarkers[key]) {
+    pinsMarkers[key].remove();
+    delete pinsMarkers[key];
+    renderPinList();  // Update sidebar list after removing pin
+  }
+});
+
+  // Button logic
+  const centerBtn = document.getElementById('centerBtn');
+
+  map.on('dragstart', () => {
+    centerBtn.style.display = 'block';
+  });
+
+  map.on('zoomstart', () => {
+    centerBtn.style.display = 'block';
+  });
+
+  centerBtn.addEventListener('click', () => {
+    map.easeTo({
+      center: lastBoatLngLat,
+      pitch: 60,
+      duration: 1000
+    });
+    centerBtn.style.display = 'none';
+  });
+</script>
+
+</body>
+</html>

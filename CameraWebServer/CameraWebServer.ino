@@ -23,6 +23,7 @@
 const char* ssid = "ESP-CONTROL-HUB";
 const char* password = "12345678";
 
+
 // Assign static IP
 IPAddress local_IP(192, 168, 4, 2);
 IPAddress gateway(192, 168, 4, 1);
